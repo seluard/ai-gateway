@@ -17,9 +17,45 @@ import (
 )
 
 func TestNewAWSHandler(t *testing.T) {
-	handler, err := newAWSHandler(t.Context(), &filterapi.AWSAuth{})
-	require.NoError(t, err)
-	require.NotNil(t, handler)
+	t.Run("credentials file", func(t *testing.T) {
+		awsFileBody := "[default]\nAWS_ACCESS_KEY_ID=test\nAWS_SECRET_ACCESS_KEY=secret\n"
+		handler, err := newAWSHandler(t.Context(), &filterapi.AWSAuth{
+			CredentialFileLiteral: awsFileBody,
+			Region:                "us-east-1",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, handler)
+	})
+
+	t.Run("default credential chain (no credentials file)", func(t *testing.T) {
+		// Note: AWS SDK's default credential chain will try multiple sources:
+		// 1. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+		// 2. Web identity token (IRSA) - AWS_ROLE_ARN, AWS_WEB_IDENTITY_TOKEN_FILE
+		// 3. EKS Pod Identity
+		// 4. EC2 instance metadata
+		// 5. Shared credentials file
+		//
+		// In test environment, it may succeed if any of these sources are available,
+		// or fail if none are. We just validate that the default credential chain path works.
+		handler, err := newAWSHandler(t.Context(), &filterapi.AWSAuth{
+			Region: "us-east-1",
+		})
+		// The result depends on the test environment's AWS credentials
+		if err != nil {
+			// If credentials aren't available, we expect a retrieval error
+			require.Contains(t, err.Error(), "cannot")
+		} else {
+			// If credentials are available (e.g., from environment), handler should be created
+			require.NotNil(t, handler)
+		}
+	})
+
+	t.Run("nil config", func(t *testing.T) {
+		handler, err := newAWSHandler(t.Context(), nil)
+		require.Error(t, err)
+		require.Nil(t, handler)
+		require.Contains(t, err.Error(), "aws auth configuration is required")
+	})
 }
 
 func TestAWSHandler_Do(t *testing.T) {

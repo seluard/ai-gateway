@@ -34,43 +34,55 @@ type awsHandler struct {
 }
 
 func newAWSHandler(ctx context.Context, awsAuth *filterapi.AWSAuth) (Handler, error) {
-	var credentials aws.Credentials
-	var region string
+	if awsAuth == nil {
+		return nil, fmt.Errorf("aws auth configuration is required")
+	}
 
-	if awsAuth != nil {
-		region = awsAuth.Region
-		if len(awsAuth.CredentialFileLiteral) != 0 {
-			tmpfile, err := os.CreateTemp("", "aws-credentials")
-			if err != nil {
-				return nil, fmt.Errorf("cannot create temp file for AWS credentials: %w", err)
-			}
-			defer func() {
-				_ = os.Remove(tmpfile.Name())
-			}()
-			if _, err = tmpfile.WriteString(awsAuth.CredentialFileLiteral); err != nil {
-				return nil, fmt.Errorf("cannot write AWS credentials to temp file: %w", err)
-			}
-			name := tmpfile.Name()
-			cfg, err := config.LoadDefaultConfig(
-				ctx,
-				config.WithSharedCredentialsFiles([]string{name}),
-				config.WithRegion(awsAuth.Region),
-			)
-			if err != nil {
-				return nil, fmt.Errorf("cannot load from credentials file: %w", err)
-			}
-			credentials, err = cfg.Credentials.Retrieve(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("cannot retrieve AWS credentials: %w", err)
-			}
+	var cfg aws.Config
+	var err error
+
+	// If credentials file is provided, use it; otherwise use default credential chain
+	// which automatically handles IRSA, EKS Pod Identity, instance roles, etc.
+	if len(awsAuth.CredentialFileLiteral) != 0 {
+		var tmpfile *os.File
+		tmpfile, err = os.CreateTemp("", "aws-credentials")
+		if err != nil {
+			return nil, fmt.Errorf("cannot create temp file for AWS credentials: %w", err)
+		}
+		defer func() {
+			_ = os.Remove(tmpfile.Name())
+		}()
+		if _, err = tmpfile.WriteString(awsAuth.CredentialFileLiteral); err != nil {
+			return nil, fmt.Errorf("cannot write AWS credentials to temp file: %w", err)
+		}
+		name := tmpfile.Name()
+		cfg, err = config.LoadDefaultConfig(
+			ctx,
+			config.WithSharedCredentialsFiles([]string{name}),
+			config.WithRegion(awsAuth.Region),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("cannot load from credentials file: %w", err)
 		}
 	} else {
-		return nil, fmt.Errorf("aws auth configuration is required")
+		// Use default credential chain (supports IRSA, EKS Pod Identity, etc.)
+		cfg, err = config.LoadDefaultConfig(
+			ctx,
+			config.WithRegion(awsAuth.Region),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("cannot load AWS config: %w", err)
+		}
+	}
+
+	credentials, err := cfg.Credentials.Retrieve(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("cannot retrieve AWS credentials: %w", err)
 	}
 
 	signer := v4.NewSigner()
 
-	return &awsHandler{credentials: credentials, signer: signer, region: region}, nil
+	return &awsHandler{credentials: credentials, signer: signer, region: awsAuth.Region}, nil
 }
 
 // Do implements [Handler.Do].
