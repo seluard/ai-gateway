@@ -13,7 +13,10 @@
 #
 # For EKS Pod Identity (newer, simpler method), see aws-pod-identity.yaml instead.
 #
-# For complete setup instructions, see:
+# For AWS IRSA setup instructions, see:
+# https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html
+#
+# For AI Gateway integration instructions, see:
 # https://docs.envoyproxy.io/ai-gateway/latest/getting-started/connect-providers/aws-bedrock.html
 
 ---

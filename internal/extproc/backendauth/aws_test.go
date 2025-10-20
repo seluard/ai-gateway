@@ -18,7 +18,7 @@ import (
 
 func TestNewAWSHandler(t *testing.T) {
 	t.Run("credentials file", func(t *testing.T) {
-		awsFileBody := "[default]\nAWS_ACCESS_KEY_ID=test\nAWS_SECRET_ACCESS_KEY=secret\n"
+		awsFileBody := "[default]\naws_access_key_id=test\naws_secret_access_key=secret\n"
 		handler, err := newAWSHandler(t.Context(), &filterapi.AWSAuth{
 			CredentialFileLiteral: awsFileBody,
 			Region:                "us-east-1",
@@ -27,7 +27,11 @@ func TestNewAWSHandler(t *testing.T) {
 		require.NotNil(t, handler)
 	})
 
-	t.Run("default credential chain (no credentials file)", func(t *testing.T) {
+	t.Run("default credential chain with environment variables", func(t *testing.T) {
+		// Set temporary environment variables for testing
+		t.Setenv("AWS_ACCESS_KEY_ID", "test-key-id")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+
 		// Note: AWS SDK's default credential chain will try multiple sources:
 		// 1. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
 		// 2. Web identity token (IRSA) - AWS_ROLE_ARN, AWS_WEB_IDENTITY_TOKEN_FILE
@@ -35,19 +39,32 @@ func TestNewAWSHandler(t *testing.T) {
 		// 4. EC2 instance metadata
 		// 5. Shared credentials file
 		//
-		// In test environment, it may succeed if any of these sources are available,
-		// or fail if none are. We just validate that the default credential chain path works.
+		// This test validates the default credential chain works with environment variables
 		handler, err := newAWSHandler(t.Context(), &filterapi.AWSAuth{
 			Region: "us-east-1",
 		})
-		// The result depends on the test environment's AWS credentials
-		if err != nil {
-			// If credentials aren't available, we expect a retrieval error
-			require.Contains(t, err.Error(), "cannot")
-		} else {
-			// If credentials are available (e.g., from environment), handler should be created
-			require.NotNil(t, handler)
-		}
+		require.NoError(t, err)
+		require.NotNil(t, handler)
+	})
+
+	t.Run("default credential chain without credentials", func(t *testing.T) {
+		// Clear AWS environment variables to ensure no credentials are available
+		t.Setenv("AWS_ACCESS_KEY_ID", "")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+		t.Setenv("AWS_SESSION_TOKEN", "")
+		t.Setenv("AWS_PROFILE", "")
+		t.Setenv("AWS_SHARED_CREDENTIALS_FILE", "/dev/null")
+		t.Setenv("AWS_CONFIG_FILE", "/dev/null")
+		t.Setenv("AWS_ROLE_ARN", "")
+		t.Setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "")
+
+		handler, err := newAWSHandler(t.Context(), &filterapi.AWSAuth{
+			Region: "us-east-1",
+		})
+		// Should fail when no credentials are available
+		require.Error(t, err)
+		require.Nil(t, handler)
+		require.Contains(t, err.Error(), "cannot")
 	})
 
 	t.Run("nil config", func(t *testing.T) {
@@ -55,6 +72,16 @@ func TestNewAWSHandler(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, handler)
 		require.Contains(t, err.Error(), "aws auth configuration is required")
+	})
+
+	t.Run("invalid credentials file", func(t *testing.T) {
+		awsFileBody := "invalid-format"
+		handler, err := newAWSHandler(t.Context(), &filterapi.AWSAuth{
+			CredentialFileLiteral: awsFileBody,
+			Region:                "us-east-1",
+		})
+		require.Error(t, err)
+		require.Nil(t, handler)
 	})
 }
 

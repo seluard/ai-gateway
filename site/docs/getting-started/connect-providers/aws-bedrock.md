@@ -10,104 +10,33 @@ This guide will help you configure Envoy AI Gateway to work with AWS Bedrock's f
 
 ## Prerequisites
 
-Before you begin, you'll need:
-
 - AWS credentials with access to Bedrock
 - Basic setup completed from the [Basic Usage](../basic-usage.md) guide
 - Basic configuration removed as described in the [Advanced Configuration](./index.md) overview
+- Enabled model access to "Llama 3.2 1B Instruct" in the `us-east-1` region (see [AWS Bedrock Model Access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html))
 
 ## Authentication Methods
 
-Envoy AI Gateway supports three authentication methods for AWS Bedrock:
+Envoy AI Gateway supports the AWS SDK default credential chain, which includes:
 
 1. **EKS Pod Identity** - Recommended for production on EKS (v1.24+)
 2. **IRSA (IAM Roles for Service Accounts)** - Recommended for production on EKS (all versions)
 3. **Static Credentials** - For development, testing, or non-EKS environments
 
-### Method 1: EKS Pod Identity (Recommended for EKS 1.24+)
+## Setup Instructions
 
-EKS Pod Identity is the newer, simpler way to grant AWS permissions to your pods. It's easier to set up than IRSA and doesn't require OIDC provider configuration.
+### Option 1: EKS Pod Identity (Recommended for EKS 1.24+)
 
-**Prerequisites:**
+EKS Pod Identity is the simplest way to grant AWS permissions to your pods without managing static credentials.
 
-- Amazon EKS cluster version 1.24 or later
-- EKS Pod Identity Agent installed (automatic in newer EKS versions)
-- IAM role with Bedrock permissions
-- Enabled model access to "Llama 3.2 1B Instruct" in the `us-east-1` region
+**Step 1: Set up AWS IAM**
 
-**Benefits:**
+Follow the official AWS documentation to configure EKS Pod Identity:
 
-- ✅ No static credentials to manage or rotate
-- ✅ Automatic credential refresh by AWS
-- ✅ Fine-grained IAM permissions per Gateway
-- ✅ Simpler setup than IRSA (no OIDC provider needed)
-- ✅ Better security audit trail
+- [EKS Pod Identity Agent installation](https://docs.aws.amazon.com/eks/latest/userguide/pod-id-agent-setup.html)
+- [Create IAM role and policy](https://docs.aws.amazon.com/eks/latest/userguide/pod-id-minimum-sdk.html)
 
-[Jump to EKS Pod Identity Configuration →](#eks-pod-identity-configuration-steps)
-
-### Method 2: IRSA (Recommended for EKS, all versions)
-
-IRSA allows your pods to assume IAM roles without storing static credentials. This works on all EKS versions and is the traditional method for AWS authentication.
-
-**Prerequisites:**
-
-- Amazon EKS cluster with OIDC provider enabled
-- IAM role with Bedrock permissions configured for your cluster
-- Enabled model access to "Llama 3.2 1B Instruct" in the `us-east-1` region
-
-**Benefits:**
-
-- ✅ No static credentials to manage or rotate
-- ✅ Automatic credential refresh by AWS
-- ✅ Fine-grained IAM permissions per Gateway
-- ✅ Better security audit trail
-- ✅ Works on all EKS versions
-
-[Jump to IRSA Configuration →](#irsa-configuration-steps)
-
-### Method 3: Static Credentials
-
-Use AWS access key ID and secret for authentication. Suitable for development, testing, or when running outside of EKS.
-
-**Prerequisites:**
-
-- AWS access key ID and secret access key
-- Credentials with permissions to:
-  - `bedrock:InvokeModel`
-  - `bedrock:ListFoundationModels`
-- Enabled model access to "Llama 3.2 1B Instruct" in the `us-east-1` region
-
-:::caution Production Warning
-Static credentials are not recommended for production. Consider using IRSA on EKS or other credential rotation mechanisms.
-:::
-
-[Jump to Static Credentials Configuration →](#static-credentials-configuration-steps)
-
----
-
-## EKS Pod Identity Configuration Steps
-
-:::info Ready to proceed?
-Ensure you have followed the steps in [Connect Providers](../connect-providers/) and have an EKS cluster version 1.24 or later.
-:::
-
-### 1. Verify EKS Pod Identity Agent
-
-First, verify that the EKS Pod Identity Agent is installed in your cluster:
-
-```shell
-kubectl get daemonset eks-pod-identity-agent -n kube-system
-```
-
-If not installed, install it using:
-
-```shell
-aws eks create-addon --cluster-name YOUR_CLUSTER_NAME --addon-name eks-pod-identity-agent
-```
-
-### 2. Create IAM Policy for Bedrock
-
-Create a file named `bedrock-policy.json`:
+Your IAM policy needs these permissions:
 
 ```json
 {
@@ -126,394 +55,137 @@ Create a file named `bedrock-policy.json`:
 }
 ```
 
-Create the policy:
+The Pod Identity association should reference:
+
+- **Namespace**: `envoy-gateway-system`
+- **ServiceAccount**: `ai-gateway-dataplane-aws`
+
+**Step 2: Apply AI Gateway configuration**
 
 ```shell
-aws iam create-policy \
-  --policy-name AIGatewayBedrockAccess \
-  --policy-document file://bedrock-policy.json
-```
+kubectl apply -f https://raw.githubusercontent.com/envoyproxy/ai-gateway/main/examples/basic/aws-pod-identity.yaml
 
-### 3. Create IAM Role for Pod Identity
-
-Create a trust policy file named `pod-identity-trust-policy.json`:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Service": "pods.eks.amazonaws.com"
-      },
-      "Action": ["sts:AssumeRole", "sts:TagSession"]
-    }
-  ]
-}
-```
-
-Create the role and attach the policy:
-
-```shell
-# Get your AWS account ID
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
-# Create the role
-aws iam create-role \
-  --role-name AIGatewayBedrockPodIdentityRole \
-  --assume-role-policy-document file://pod-identity-trust-policy.json
-
-# Attach the policy
-aws iam attach-role-policy \
-  --role-name AIGatewayBedrockPodIdentityRole \
-  --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/AIGatewayBedrockAccess
-
-# Get the role ARN (save this for next step)
-aws iam get-role --role-name AIGatewayBedrockPodIdentityRole --query Role.Arn --output text
-```
-
-### 4. Create Pod Identity Association
-
-Create the association between your ServiceAccount and the IAM role:
-
-```shell
-aws eks create-pod-identity-association \
-  --cluster-name YOUR_CLUSTER_NAME \
-  --namespace envoy-gateway-system \
-  --service-account ai-gateway-dataplane-aws \
-  --role-arn arn:aws:iam::$ACCOUNT_ID:role/AIGatewayBedrockPodIdentityRole
-```
-
-### 5. Download and Apply Pod Identity Configuration
-
-Download the configuration template:
-
-```shell
-curl -O https://raw.githubusercontent.com/envoyproxy/ai-gateway/main/examples/basic/aws-pod-identity.yaml
-```
-
-**No modifications needed!** The configuration automatically uses the AWS credential chain, which includes Pod Identity.
-
-Apply the configuration:
-
-```shell
-kubectl apply -f aws-pod-identity.yaml
-
-# Wait for the Gateway pod to be ready
 kubectl wait pods --timeout=2m \
   -l gateway.envoyproxy.io/owning-gateway-name=envoy-ai-gateway-basic \
-  -n envoy-gateway-system \
-  --for=condition=Ready
+  -n envoy-gateway-system --for=condition=Ready
 ```
 
-### 6. Verify Pod Identity is Working
-
-Check that the pod has the AWS environment variables:
+**Step 3: Test**
 
 ```shell
-POD_NAME=$(kubectl get pod -n envoy-gateway-system \
-  -l gateway.envoyproxy.io/owning-gateway-name=envoy-ai-gateway-basic \
-  -o jsonpath='{.items[0].metadata.name}')
-
-# Check for Pod Identity environment variables
-kubectl exec -n envoy-gateway-system $POD_NAME -c extproc -- env | grep AWS
-```
-
-With Pod Identity, you should see environment variables set by the EKS Pod Identity Agent.
-
-### 7. Test the Configuration
-
-```shell
-# Set GATEWAY_URL if not already set
 export GATEWAY_URL=$(kubectl get gateway envoy-ai-gateway-basic -n default -o jsonpath='{.status.addresses[0].value}')
 
-# Test request
-curl -H "Content-Type: application/json" \
-  -d '{
-    "model": "us.meta.llama3-2-1b-instruct-v1:0",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Hello from EKS Pod Identity!"
-      }
-    ]
-  }' \
-  http://$GATEWAY_URL/v1/chat/completions
+curl -H "Content-Type: application/json" -d '{
+  "model": "us.meta.llama3-2-1b-instruct-v1:0",
+  "messages": [{"role": "user", "content": "Hello!"}]
+}' http://$GATEWAY_URL/v1/chat/completions
 ```
-
-If successful, you should receive a response from AWS Bedrock using Pod Identity! 🎉
 
 ---
 
-## IRSA Configuration Steps
+### Option 2: IRSA (IAM Roles for Service Accounts)
 
-:::info Ready to proceed?
-Ensure you have followed the steps in [Connect Providers](../connect-providers/) and have an EKS cluster with OIDC provider enabled.
-:::
+IRSA works on all EKS versions and uses OIDC federation for authentication.
 
-:::tip Consider EKS Pod Identity
-If you're on EKS 1.24+, consider using [EKS Pod Identity](#eks-pod-identity-configuration-steps) instead. It's simpler to set up and doesn't require OIDC provider configuration.
-:::
+**Step 1: Set up AWS IAM**
 
-### 1. Create IAM Role for IRSA
+Follow the official AWS documentation to configure IRSA:
 
-First, you need to create an IAM role that your pods will assume. This role needs:
+- [Enable OIDC provider](https://docs.aws.amazon.com/eks/latest/userguide/enable-iam-roles-for-service-accounts.html)
+- [Create IAM role with trust policy](https://docs.aws.amazon.com/eks/latest/userguide/associate-service-account-role.html)
 
-- Trust policy allowing your EKS cluster's OIDC provider
-- Permissions policy for Bedrock access
+Your IAM policy needs the same Bedrock permissions as Pod Identity above.
 
-**Step 1a: Get your EKS cluster's OIDC provider ARN**
+The trust policy should allow the ServiceAccount `system:serviceaccount:envoy-gateway-system:ai-gateway-dataplane-aws`.
 
-```shell
-# Get your cluster's OIDC provider URL
-OIDC_PROVIDER=$(aws eks describe-cluster --name YOUR_CLUSTER_NAME --query "cluster.identity.oidc.issuer" --output text | sed -e "s/^https:\/\///")
-
-# Get your AWS account ID
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
-echo "OIDC Provider: $OIDC_PROVIDER"
-echo "Account ID: $ACCOUNT_ID"
-```
-
-**Step 1b: Create IAM policy for Bedrock**
-
-Create a file named `bedrock-policy.json`:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "bedrock:InvokeModel",
-        "bedrock:InvokeModelWithResponseStream",
-        "bedrock:ListFoundationModels"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
-```
-
-Create the policy:
-
-```shell
-aws iam create-policy \
-  --policy-name AIGatewayBedrockAccess \
-  --policy-document file://bedrock-policy.json
-```
-
-**Step 1c: Create IAM role with trust policy**
-
-Create a file named `trust-policy.json` (replace `YOUR_CLUSTER_OIDC_PROVIDER` with your OIDC provider):
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Federated": "arn:aws:iam::YOUR_ACCOUNT_ID:oidc-provider/YOUR_CLUSTER_OIDC_PROVIDER"
-      },
-      "Action": "sts:AssumeRoleWithWebIdentity",
-      "Condition": {
-        "StringEquals": {
-          "YOUR_CLUSTER_OIDC_PROVIDER:sub": "system:serviceaccount:envoy-gateway-system:ai-gateway-dataplane-irsa",
-          "YOUR_CLUSTER_OIDC_PROVIDER:aud": "sts.amazonaws.com"
-        }
-      }
-    }
-  ]
-}
-```
-
-Create the role and attach the policy:
-
-```shell
-# Create the role
-aws iam create-role \
-  --role-name AIGatewayBedrockRole \
-  --assume-role-policy-document file://trust-policy.json
-
-# Attach the policy
-aws iam attach-role-policy \
-  --role-name AIGatewayBedrockRole \
-  --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/AIGatewayBedrockAccess
-
-# Get the role ARN (save this for next step)
-aws iam get-role --role-name AIGatewayBedrockRole --query Role.Arn --output text
-```
-
-### 2. Download and Configure IRSA Template
-
-Download the IRSA configuration template:
+**Step 2: Download and configure**
 
 ```shell
 curl -O https://raw.githubusercontent.com/envoyproxy/ai-gateway/main/examples/basic/aws-irsa.yaml
 ```
 
-Edit `aws-irsa.yaml` and replace:
-
-- `ACCOUNT_ID`: Your AWS account ID (from step 1)
-- `arn:aws:iam::ACCOUNT_ID:role/ai-gateway-bedrock-role`: Your IAM role ARN from step 1c
-
-The key part to update:
+Edit `aws-irsa.yaml` and replace `ACCOUNT_ID` with your AWS account ID in the ServiceAccount annotation:
 
 ```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: ai-gateway-dataplane-irsa
-  namespace: envoy-gateway-system
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/AIGatewayBedrockRole # ← Update this
+eks.amazonaws.com/role-arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/AIGatewayBedrockRole
 ```
 
-### 3. Apply IRSA Configuration
-
-Apply the configuration:
+**Step 3: Apply and test**
 
 ```shell
 kubectl apply -f aws-irsa.yaml
 
-# Wait for the Gateway pod to be ready
 kubectl wait pods --timeout=2m \
   -l gateway.envoyproxy.io/owning-gateway-name=envoy-ai-gateway-basic \
-  -n envoy-gateway-system \
-  --for=condition=Ready
-```
+  -n envoy-gateway-system --for=condition=Ready
 
-### 4. Verify IRSA is Working
-
-Check that the pod has the IRSA environment variables:
-
-```shell
-POD_NAME=$(kubectl get pod -n envoy-gateway-system \
-  -l gateway.envoyproxy.io/owning-gateway-name=envoy-ai-gateway-basic \
-  -o jsonpath='{.items[0].metadata.name}')
-
-# Check environment variables
-kubectl exec -n envoy-gateway-system $POD_NAME -c extproc -- env | grep AWS
-```
-
-You should see:
-
-```
-AWS_ROLE_ARN=arn:aws:iam::YOUR_ACCOUNT_ID:role/AIGatewayBedrockRole
-AWS_WEB_IDENTITY_TOKEN_FILE=/var/run/secrets/eks.amazonaws.com/serviceaccount/token
-```
-
-### 5. Test the Configuration
-
-```shell
-# Set GATEWAY_URL if not already set
+# Test (use same curl command as Pod Identity above)
 export GATEWAY_URL=$(kubectl get gateway envoy-ai-gateway-basic -n default -o jsonpath='{.status.addresses[0].value}')
-
-# Test request
-curl -H "Content-Type: application/json" \
-  -d '{
-    "model": "us.meta.llama3-2-1b-instruct-v1:0",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Hello from IRSA!"
-      }
-    ]
-  }' \
-  http://$GATEWAY_URL/v1/chat/completions
+curl -H "Content-Type: application/json" -d '{
+  "model": "us.meta.llama3-2-1b-instruct-v1:0",
+  "messages": [{"role": "user", "content": "Hello!"}]
+}' http://$GATEWAY_URL/v1/chat/completions
 ```
-
-If successful, you should receive a response from AWS Bedrock without any static credentials! 🎉
 
 ---
 
-## Static Credentials Configuration Steps
+### Option 3: Static Credentials
 
-:::info Ready to proceed?
-Ensure you have followed the steps in [Connect Providers](../connect-providers/)
+Use AWS access key ID and secret for authentication. Suitable for development, testing, or non-EKS environments.
+
+:::caution Production Warning
+Static credentials are not recommended for production. Use EKS Pod Identity or IRSA instead.
 :::
 
-### 1. Download configuration template
+**Step 1: Download and configure**
 
 ```shell
 curl -O https://raw.githubusercontent.com/envoyproxy/ai-gateway/main/examples/basic/aws.yaml
 ```
 
-### 2. Configure AWS Credentials
-
-Edit the `aws.yaml` file to replace these placeholder values:
+Edit `aws.yaml` and replace the credential placeholders:
 
 - `AWS_ACCESS_KEY_ID`: Your AWS access key ID
 - `AWS_SECRET_ACCESS_KEY`: Your AWS secret access key
 
-:::caution Security Note
-Make sure to keep your AWS credentials secure and never commit them to version control.
-The credentials will be stored in Kubernetes secrets. For production, use EKS Pod Identity or IRSA instead.
-:::
-
-### 3. Apply Static Credentials Configuration
-
-Apply the updated configuration and wait for the Gateway pod to be ready. If you already have a Gateway running,
-then the secret credential update will be picked up automatically in a few seconds.
+**Step 2: Apply and test**
 
 ```shell
 kubectl apply -f aws.yaml
 
 kubectl wait pods --timeout=2m \
   -l gateway.envoyproxy.io/owning-gateway-name=envoy-ai-gateway-basic \
-  -n envoy-gateway-system \
-  --for=condition=Ready
+  -n envoy-gateway-system --for=condition=Ready
+
+# Test (use same curl command as above)
+export GATEWAY_URL=$(kubectl get gateway envoy-ai-gateway-basic -n default -o jsonpath='{.status.addresses[0].value}')
+curl -H "Content-Type: application/json" -d '{
+  "model": "us.meta.llama3-2-1b-instruct-v1:0",
+  "messages": [{"role": "user", "content": "Hello!"}]
+}' http://$GATEWAY_URL/v1/chat/completions
 ```
 
-### 4. Test the Configuration
-
-You should have set `$GATEWAY_URL` as part of the basic setup before connecting to providers.
-See the [Basic Usage](../basic-usage.md) page for instructions.
-
-```shell
-curl -H "Content-Type: application/json" \
-  -d '{
-    "model": "us.meta.llama3-2-1b-instruct-v1:0",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Hi."
-      }
-    ]
-  }' \
-  $GATEWAY_URL/v1/chat/completions
-```
+---
 
 ## Troubleshooting
 
 If you encounter issues:
 
-1. **Verify your authentication method is configured correctly:**
-   - For **EKS Pod Identity**: Check that the Pod Identity association exists and the Pod Identity Agent is running
+1. **Verify authentication is configured correctly**
+   - For **EKS Pod Identity**: Check Pod Identity association exists
      ```shell
      aws eks list-pod-identity-associations --cluster-name YOUR_CLUSTER_NAME
-     kubectl get daemonset eks-pod-identity-agent -n kube-system
      ```
-   - For **IRSA**: Check that the ServiceAccount has the correct annotation and environment variables are set
+   - For **IRSA**: Check ServiceAccount annotation
      ```shell
      kubectl get sa ai-gateway-dataplane-aws -n envoy-gateway-system -o yaml
-     kubectl exec -n envoy-gateway-system $POD_NAME -c extproc -- env | grep AWS
      ```
-   - For **Static Credentials**: Verify the secret exists and contains the correct keys
+   - For **Static Credentials**: Verify secret exists
      ```shell
      kubectl get secret -n default
      ```
 
-2. Check pod status:
-
-   ```shell
-   kubectl get pods -n envoy-gateway-system
-   ```
-
-3. View data plane logs:
+2. **Check pod logs**
 
    ```shell
    POD_NAME=$(kubectl get pod -n envoy-gateway-system \
@@ -522,21 +194,20 @@ If you encounter issues:
    kubectl logs -n envoy-gateway-system $POD_NAME -c extproc
    ```
 
-4. View controller logs:
-
-   ```shell
-   kubectl logs -n envoy-ai-gateway-system deployment/ai-gateway-controller
-   ```
-
-5. Common errors:
+3. **Common errors**
    - **401/403**: Invalid credentials or insufficient IAM permissions
    - **404**: Model not found or not available in the specified region
-   - **429**: Rate limit exceeded
-   - **AssumeRole errors**: Check IAM role trust policy and permissions
+   - **AssumeRole errors**: Check IAM role trust policy
+
+For more details on AWS authentication, see:
+
+- [AWS SDK credential chain](https://docs.aws.amazon.com/sdkref/latest/guide/standardized-credentials.html)
+- [EKS Pod Identity documentation](https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html)
+- [IRSA documentation](https://docs.aws.amazon.com/eks/latest/userguide/iam-roles-for-service-accounts.html)
 
 ## Configuring More Models
 
-To use more models, add more [AIGatewayRouteRule]s to the `aws.yaml` file with the [model ID] in the `value` field. For example, to use [Claude 3 Sonnet]
+To use additional models, add more [AIGatewayRouteRule]s to your configuration with the [model ID] in the `value` field. For example, to use [Claude 3 Sonnet]:
 
 ```yaml
 apiVersion: aigateway.envoyproxy.io/v1alpha1

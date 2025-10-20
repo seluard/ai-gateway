@@ -12,7 +12,10 @@
 # 3. IAM role with Bedrock permissions and trust policy for pods.eks.amazonaws.com
 # 4. Pod Identity association created linking your ServiceAccount to the IAM role
 #
-# For complete setup instructions, see:
+# For AWS Pod Identity setup instructions, see:
+# https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html
+#
+# For AI Gateway integration instructions, see:
 # https://docs.envoyproxy.io/ai-gateway/latest/getting-started/connect-providers/aws-bedrock.html
 
 ---
