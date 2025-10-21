@@ -584,6 +584,8 @@ func TestAnthropicToAWSAnthropicTranslator_ResponseBody_InvalidJSON(t *testing.T
 	if headerMutation != nil {
 		assert.NotEmpty(t, headerMutation.SetHeaders)
 	}
+
+	//nolint:testifylint //  testifylint want to use JSONEq which is not possible
 	assert.Equal(t, invalidJSON, bodyMutation.GetBody())
 
 	// Token usage should be zero for invalid JSON.
