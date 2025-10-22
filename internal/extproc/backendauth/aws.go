@@ -28,9 +28,9 @@ import (
 
 // awsHandler implements [Handler] for AWS Bedrock authz.
 type awsHandler struct {
-	credentials aws.Credentials
-	signer      *v4.Signer
-	region      string
+	credentialsProvider aws.CredentialsProvider
+	signer              *v4.Signer
+	region              string
 }
 
 func newAWSHandler(ctx context.Context, awsAuth *filterapi.AWSAuth) (Handler, error) {
@@ -75,14 +75,9 @@ func newAWSHandler(ctx context.Context, awsAuth *filterapi.AWSAuth) (Handler, er
 		}
 	}
 
-	credentials, err := cfg.Credentials.Retrieve(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("cannot retrieve AWS credentials: %w", err)
-	}
-
 	signer := v4.NewSigner()
 
-	return &awsHandler{credentials: credentials, signer: signer, region: awsAuth.Region}, nil
+	return &awsHandler{credentialsProvider: cfg.Credentials, signer: signer, region: awsAuth.Region}, nil
 }
 
 // Do implements [Handler.Do].
@@ -127,7 +122,12 @@ func (a *awsHandler) Do(ctx context.Context, requestHeaders map[string]string, h
 	// https://github.com/envoyproxy/envoy/blob/60b2b5187cf99db79ecfc54675354997af4765ea/source/extensions/filters/http/ext_proc/processor_state.cc#L180-L183
 	req.ContentLength = -1
 
-	err = a.signer.SignHTTP(ctx, a.credentials, req,
+	credentials, err := a.credentialsProvider.Retrieve(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot retrieve AWS credentials: %w", err)
+	}
+
+	err = a.signer.SignHTTP(ctx, credentials, req,
 		hex.EncodeToString(payloadHash[:]), "bedrock", a.region, time.Now())
 	if err != nil {
 		return fmt.Errorf("cannot sign request: %w", err)
