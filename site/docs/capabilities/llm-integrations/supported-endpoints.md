@@ -80,6 +80,7 @@ curl -H "Content-Type: application/json" \
 
 - Anthropic
 - GCP Anthropic
+- AWS Anthropic
 
 **Example:**
 
@@ -212,6 +213,7 @@ The following table summarizes which providers support which endpoints:
 | [Tetrate Agent Router Service (TARS)](https://router.tetrate.ai/)                                     |        ⚠️        |     ⚠️      |     ⚠️     |         ❌         | Via OpenAI-compatible API                                                                                            |
 | [Google Vertex AI](https://cloud.google.com/vertex-ai/docs/reference/rest)                            |        ✅        |     🚧      |     🚧     |         ❌         | Via OpenAI-compatible API                                                                                            |
 | [Anthropic on Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude) |        ✅        |     ❌      |     🚧     |         ✅         | Via OpenAI-compatible API and Native Anthropic API                                                                   |
+| [Anthropic on AWS Bedrock](https://aws.amazon.com/bedrock/anthropic/)                                 |        🚧        |     ❌      |     ❌     |         ✅         | Native Anthropic API                                                                                                 |
 | [SambaNova](https://docs.sambanova.ai/sambastudio/latest/open-ai-api.html)                            |        ✅        |     ⚠️      |     ✅     |         ❌         | Via OpenAI-compatible API                                                                                            |
 | [Anthropic](https://docs.claude.com/en/home)                                                          |        ✅        |     ❌      |     ❌     |         ✅         | Via OpenAI-compatible API and Native Anthropic API                                                                   |
 
