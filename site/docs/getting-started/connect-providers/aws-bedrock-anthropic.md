@@ -28,6 +28,7 @@ Ensure you have:
 2. AWS credentials with permissions to:
    - `bedrock:InvokeModel`
    - `bedrock:ListFoundationModels`
+   - `aws-marketplace:ViewSubscriptions`
 3. Your AWS access key ID and secret access key
 4. Enabled model access to Anthropic Claude models in your desired AWS region (e.g., `us-east-1`)
    - Go to the AWS Bedrock console and request access to Anthropic models
@@ -144,20 +145,6 @@ curl -H "Content-Type: application/json" \
   $GATEWAY_URL/anthropic/v1/messages
 ```
 
-## Available Anthropic Models on AWS Bedrock
-
-AWS Bedrock supports several Claude model versions. Here are some commonly used model IDs:
-
-| Model Name                   | AWS Bedrock Model ID                      |
-| ---------------------------- | ----------------------------------------- |
-| Claude 3.5 Sonnet (Oct 2024) | anthropic.claude-3-5-sonnet-20241022-v2:0 |
-| Claude 3.5 Sonnet (Jun 2024) | anthropic.claude-3-5-sonnet-20240620-v1:0 |
-| Claude 3 Opus                | anthropic.claude-3-opus-20240229-v1:0     |
-| Claude 3 Sonnet              | anthropic.claude-3-sonnet-20240229-v1:0   |
-| Claude 3 Haiku               | anthropic.claude-3-haiku-20240307-v1:0    |
-
-> [!NOTE]
-> Model availability varies by AWS region. Check the [AWS Bedrock documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html) for the complete list of supported models in your region.
 
 ## Configuring More Models
 
@@ -316,29 +303,3 @@ If you encounter issues:
 | 400        | Invalid request format                          | Verify request body matches Anthropic API format                     |
 | 500        | AWS Bedrock internal error                      | Check AWS Bedrock service status and retry after a short delay       |
 
-## Security Considerations
-
-When deploying in production:
-
-1. **Use IAM Roles for Service Accounts (IRSA)** in EKS instead of static credentials
-2. **Implement request rate limiting** to control costs and prevent abuse
-3. **Enable audit logging** to track API usage and detect anomalies
-4. **Use least-privilege IAM policies** that only grant necessary permissions
-5. **Rotate credentials regularly** if using static access keys
-6. **Monitor token usage and costs** using the gateway's metrics
-
-## What's Next
-
-Now that you've connected AWS Bedrock with the native Anthropic API, explore these capabilities:
-
-- **[Usage-Based Rate Limiting](../../capabilities/traffic/usage-based-ratelimiting.md)** - Configure token-based rate limiting and cost controls
-- **[Provider Fallback](../../capabilities/traffic/provider-fallback.md)** - Set up automatic failover between AWS Bedrock and other Anthropic providers
-- **[Metrics and Monitoring](../../capabilities/observability/metrics.md)** - Monitor usage, costs, and performance metrics
-- **[Model Virtualization](../../capabilities/traffic/model-virtualization.md)** - Create virtual model names that route to different backends
-
-## References
-
-- [AWS Bedrock Anthropic Models Documentation](https://aws.amazon.com/bedrock/anthropic/)
-- [Anthropic API Reference](https://docs.anthropic.com/en/api)
-- [AWS Bedrock Model IDs](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html)
-- [AIGatewayRoute API Reference](../../api/api.mdx#aigatewayrouterule)
