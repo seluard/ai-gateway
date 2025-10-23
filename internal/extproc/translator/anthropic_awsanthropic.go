@@ -23,13 +23,16 @@ import (
 // NewAnthropicToAWSAnthropicTranslator creates a translator for Anthropic to AWS Bedrock Anthropic format.
 // AWS Bedrock supports the native Anthropic Messages API, so this is essentially a passthrough
 // translator with AWS-specific path modifications.
-func NewAnthropicToAWSAnthropicTranslator(modelNameOverride internalapi.ModelNameOverride) AnthropicMessagesTranslator {
+func NewAnthropicToAWSAnthropicTranslator(apiVersion string, modelNameOverride internalapi.ModelNameOverride) AnthropicMessagesTranslator {
 	return &anthropicToAWSAnthropicTranslator{
+		apiVersion:        apiVersion,
 		modelNameOverride: modelNameOverride,
 	}
 }
 
 type anthropicToAWSAnthropicTranslator struct {
+	// TODO: reuse anthropicToAnthropicTranslator and embed it here to avoid code duplication.
+	apiVersion        string
 	modelNameOverride internalapi.ModelNameOverride
 	requestModel      internalapi.RequestModel
 }
@@ -54,6 +57,13 @@ func (a *anthropicToAWSAnthropicTranslator) RequestBody(_ []byte, body *anthropi
 
 	// Remove the model field since AWS Bedrock doesn't want it in the body (it's in the path).
 	delete(anthropicReq, "model")
+
+	// Add AWS-Bedrock-specific anthropic_version field (required by AWS Bedrock).
+	// Uses backend config version (e.g., "bedrock-2023-05-31" for AWS Bedrock).
+	if a.apiVersion == "" {
+		return nil, nil, fmt.Errorf("anthropic_version is required for AWS Bedrock but not provided in backend configuration")
+	}
+	anthropicReq[anthropicVersionKey] = a.apiVersion
 
 	// Marshal the modified request.
 	mutatedBody, err := json.Marshal(anthropicReq)

@@ -159,7 +159,7 @@ func (c *messagesProcessorUpstreamFilter) selectTranslator(out filterapi.Version
 		c.translator = translator.NewAnthropicToGCPAnthropicTranslator(out.Version, c.modelNameOverride)
 	case filterapi.APISchemaAWSAnthropic:
 		// Anthropic → AWS Bedrock Anthropic (request direction translator).
-		c.translator = translator.NewAnthropicToAWSAnthropicTranslator(c.modelNameOverride)
+		c.translator = translator.NewAnthropicToAWSAnthropicTranslator(out.Version, c.modelNameOverride)
 	case filterapi.APISchemaAnthropic:
 		c.translator = translator.NewAnthropicToAnthropicTranslator(out.Version, c.modelNameOverride)
 	default:
