@@ -65,7 +65,7 @@ func TestAnthropicToAWSAnthropicTranslator_RequestBody_ModelNameOverride(t *test
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			translator := NewAnthropicToAWSAnthropicTranslator(tt.override)
+			translator := NewAnthropicToAWSAnthropicTranslator("bedrock-2023-05-31", tt.override)
 
 			// Create the request using map structure.
 			originalReq := &anthropicschema.MessagesRequest{
@@ -98,15 +98,16 @@ func TestAnthropicToAWSAnthropicTranslator_RequestBody_ModelNameOverride(t *test
 			_, hasModel := modifiedReq["model"]
 			assert.False(t, hasModel, "model field should be removed from request body")
 
-			// Verify no anthropic_version field is added (AWS uses native format).
-			_, hasVersion := modifiedReq["anthropic_version"]
-			assert.False(t, hasVersion, "anthropic_version should not be added for AWS Bedrock")
+			// Verify anthropic_version field is added (required by AWS Bedrock).
+			version, hasVersion := modifiedReq["anthropic_version"]
+			assert.True(t, hasVersion, "anthropic_version should be added for AWS Bedrock")
+			assert.Equal(t, "bedrock-2023-05-31", version, "anthropic_version should match the configured version")
 		})
 	}
 }
 
 func TestAnthropicToAWSAnthropicTranslator_ComprehensiveMarshalling(t *testing.T) {
-	translator := NewAnthropicToAWSAnthropicTranslator("")
+	translator := NewAnthropicToAWSAnthropicTranslator("bedrock-2023-05-31", "")
 
 	// Create a comprehensive MessagesRequest with all possible fields using map structure.
 	originalReq := &anthropicschema.MessagesRequest{
@@ -170,8 +171,9 @@ func TestAnthropicToAWSAnthropicTranslator_ComprehensiveMarshalling(t *testing.T
 
 	require.NotContains(t, outputReq, "model", "model field should be removed for AWS Bedrock")
 
-	// AWS Bedrock uses native Anthropic format - no anthropic_version needed.
-	require.NotContains(t, outputReq, "anthropic_version", "anthropic_version should not be added for AWS Bedrock")
+	// AWS Bedrock requires anthropic_version field.
+	require.Contains(t, outputReq, "anthropic_version", "anthropic_version should be added for AWS Bedrock")
+	require.Equal(t, "bedrock-2023-05-31", outputReq["anthropic_version"], "anthropic_version should match the configured version")
 
 	messages, ok := outputReq["messages"].([]any)
 	require.True(t, ok, "messages should be an array")
@@ -234,7 +236,7 @@ func TestAnthropicToAWSAnthropicTranslator_RequestBody_StreamingPaths(t *testing
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			translator := NewAnthropicToAWSAnthropicTranslator("")
+			translator := NewAnthropicToAWSAnthropicTranslator("bedrock-2023-05-31", "")
 
 			parsedReq := &anthropicschema.MessagesRequest{
 				"model": "anthropic.claude-3-sonnet-20240229-v1:0",
@@ -266,7 +268,7 @@ func TestAnthropicToAWSAnthropicTranslator_RequestBody_StreamingPaths(t *testing
 }
 
 func TestAnthropicToAWSAnthropicTranslator_RequestBody_FieldPassthrough(t *testing.T) {
-	translator := NewAnthropicToAWSAnthropicTranslator("")
+	translator := NewAnthropicToAWSAnthropicTranslator("bedrock-2023-05-31", "")
 
 	temp := 0.7
 	topP := 0.95
@@ -355,13 +357,14 @@ func TestAnthropicToAWSAnthropicTranslator_RequestBody_FieldPassthrough(t *testi
 	_, hasModel := modifiedReq["model"]
 	require.False(t, hasModel, "model field should be removed from request body")
 
-	// Verify anthropic_version is NOT added for AWS (unlike GCP).
-	_, hasVersion := modifiedReq["anthropic_version"]
-	require.False(t, hasVersion, "anthropic_version should not be added for AWS Bedrock")
+	// Verify anthropic_version is added for AWS Bedrock.
+	version, hasVersion := modifiedReq["anthropic_version"]
+	require.True(t, hasVersion, "anthropic_version should be added for AWS Bedrock")
+	require.Equal(t, "bedrock-2023-05-31", version, "anthropic_version should match the configured version")
 }
 
 func TestAnthropicToAWSAnthropicTranslator_ResponseHeaders(t *testing.T) {
-	translator := NewAnthropicToAWSAnthropicTranslator("")
+	translator := NewAnthropicToAWSAnthropicTranslator("bedrock-2023-05-31", "")
 
 	tests := []struct {
 		name    string
@@ -391,7 +394,7 @@ func TestAnthropicToAWSAnthropicTranslator_ResponseHeaders(t *testing.T) {
 }
 
 func TestAnthropicToAWSAnthropicTranslator_ResponseBody_NonStreaming(t *testing.T) {
-	translator := NewAnthropicToAWSAnthropicTranslator("")
+	translator := NewAnthropicToAWSAnthropicTranslator("bedrock-2023-05-31", "")
 
 	// Create a sample Anthropic response.
 	respBody := anthropic.Message{
@@ -442,7 +445,7 @@ func TestAnthropicToAWSAnthropicTranslator_ResponseBody_NonStreaming(t *testing.
 }
 
 func TestAnthropicToAWSAnthropicTranslator_ResponseBody_WithCachedTokens(t *testing.T) {
-	translator := NewAnthropicToAWSAnthropicTranslator("")
+	translator := NewAnthropicToAWSAnthropicTranslator("bedrock-2023-05-31", "")
 
 	// Test response with cached input tokens.
 	respBody := anthropic.Message{
@@ -478,7 +481,7 @@ func TestAnthropicToAWSAnthropicTranslator_ResponseBody_WithCachedTokens(t *test
 }
 
 func TestAnthropicToAWSAnthropicTranslator_ResponseBody_StreamingTokenUsage(t *testing.T) {
-	translator := NewAnthropicToAWSAnthropicTranslator("")
+	translator := NewAnthropicToAWSAnthropicTranslator("bedrock-2023-05-31", "")
 
 	tests := []struct {
 		name          string
@@ -550,7 +553,7 @@ func TestAnthropicToAWSAnthropicTranslator_ResponseBody_StreamingTokenUsage(t *t
 }
 
 func TestAnthropicToAWSAnthropicTranslator_ResponseBody_ReadError(t *testing.T) {
-	translator := NewAnthropicToAWSAnthropicTranslator("")
+	translator := NewAnthropicToAWSAnthropicTranslator("bedrock-2023-05-31", "")
 
 	// Create a reader that will fail.
 	errorReader := &awsAnthropicErrorReader{}
@@ -569,7 +572,7 @@ func (e *awsAnthropicErrorReader) Read(_ []byte) (n int, err error) {
 }
 
 func TestAnthropicToAWSAnthropicTranslator_ResponseBody_InvalidJSON(t *testing.T) {
-	translator := NewAnthropicToAWSAnthropicTranslator("")
+	translator := NewAnthropicToAWSAnthropicTranslator("bedrock-2023-05-31", "")
 
 	invalidJSON := []byte(`{invalid json}`)
 	bodyReader := bytes.NewReader(invalidJSON)
@@ -622,7 +625,7 @@ func TestAnthropicToAWSAnthropicTranslator_URLEncoding(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			translator := NewAnthropicToAWSAnthropicTranslator("")
+			translator := NewAnthropicToAWSAnthropicTranslator("bedrock-2023-05-31", "")
 
 			originalReq := &anthropicschema.MessagesRequest{
 				"model": tt.modelID,
