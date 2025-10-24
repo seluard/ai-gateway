@@ -6,15 +6,13 @@
 package translator
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
 	"net/url"
 
-	"github.com/anthropics/anthropic-sdk-go"
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/tidwall/sjson"
 
 	anthropicschema "github.com/envoyproxy/ai-gateway/internal/apischema/anthropic"
 	"github.com/envoyproxy/ai-gateway/internal/internalapi"
@@ -24,56 +22,51 @@ import (
 // AWS Bedrock supports the native Anthropic Messages API, so this is essentially a passthrough
 // translator with AWS-specific path modifications.
 func NewAnthropicToAWSAnthropicTranslator(apiVersion string, modelNameOverride internalapi.ModelNameOverride) AnthropicMessagesTranslator {
+	anthropicTranslator := NewAnthropicToAnthropicTranslator(apiVersion, modelNameOverride).(*anthropicToAnthropicTranslator)
 	return &anthropicToAWSAnthropicTranslator{
-		apiVersion:        apiVersion,
-		modelNameOverride: modelNameOverride,
+		apiVersion:                     apiVersion,
+		anthropicToAnthropicTranslator: *anthropicTranslator,
 	}
 }
 
 type anthropicToAWSAnthropicTranslator struct {
-	// TODO: reuse anthropicToAnthropicTranslator and embed it here to avoid code duplication.
-	apiVersion        string
-	modelNameOverride internalapi.ModelNameOverride
-	requestModel      internalapi.RequestModel
+	anthropicToAnthropicTranslator
+	apiVersion string
 }
 
 // RequestBody implements [AnthropicMessagesTranslator.RequestBody] for Anthropic to AWS Bedrock Anthropic translation.
 // This handles the transformation from native Anthropic format to AWS Bedrock format.
-func (a *anthropicToAWSAnthropicTranslator) RequestBody(_ []byte, body *anthropicschema.MessagesRequest, _ bool) (
+// https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-request-response.html
+func (a *anthropicToAWSAnthropicTranslator) RequestBody(rawBody []byte, body *anthropicschema.MessagesRequest, _ bool) (
 	headerMutation *extprocv3.HeaderMutation, bodyMutation *extprocv3.BodyMutation, err error,
 ) {
-	// Extract model name for AWS Bedrock endpoint from the parsed request.
-	modelName := body.GetModel()
-
-	// Work directly with the map since MessagesRequest is already map[string]interface{}.
-	anthropicReq := make(map[string]any)
-	maps.Copy(anthropicReq, *body)
-
-	// Apply model name override if configured.
-	a.requestModel = modelName
-	if a.modelNameOverride != "" {
-		a.requestModel = a.modelNameOverride
-	}
-
-	// Remove the model field since AWS Bedrock doesn't want it in the body (it's in the path).
-	delete(anthropicReq, "model")
-
-	// Add AWS-Bedrock-specific anthropic_version field (required by AWS Bedrock).
-	// Uses backend config version (e.g., "bedrock-2023-05-31" for AWS Bedrock).
-	if a.apiVersion == "" {
-		return nil, nil, fmt.Errorf("anthropic_version is required for AWS Bedrock but not provided in backend configuration")
-	}
-	anthropicReq[anthropicVersionKey] = a.apiVersion
-
-	// Marshal the modified request.
-	mutatedBody, err := json.Marshal(anthropicReq)
+	// AWS Bedrock always needs a body mutation because we must add anthropic_version and remove model field
+	headerMutation, bodyMutation, err = a.anthropicToAnthropicTranslator.RequestBody(rawBody, body, true)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to marshal modified request: %w", err)
+		return
 	}
+
+	// add anthropic_version field
+	preparedBody, err := sjson.SetBytes(bodyMutation.GetBody(), anthropicVersionKey, a.apiVersion)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to set anthropic_version field: %w", err)
+	}
+	// delete model field as AWS Bedrock expects model in the path, not in the body
+	preparedBody, err = sjson.DeleteBytes(preparedBody, "model")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to delete model field: %w", err)
+	}
+
+	bodyMutation = &extprocv3.BodyMutation{
+		Mutation: &extprocv3.BodyMutation_Body{Body: preparedBody},
+	}
+
+	// update content length after changing the body
+	setContentLength(headerMutation, preparedBody)
 
 	// Determine the AWS Bedrock path based on whether streaming is requested.
 	var pathTemplate string
-	if stream, ok := anthropicReq["stream"].(bool); ok && stream {
+	if body.GetStream() {
 		pathTemplate = "/model/%s/invoke-stream"
 	} else {
 		pathTemplate = "/model/%s/invoke"
@@ -85,7 +78,13 @@ func (a *anthropicToAWSAnthropicTranslator) RequestBody(_ []byte, body *anthropi
 	encodedModelID := url.PathEscape(a.requestModel)
 	pathSuffix := fmt.Sprintf(pathTemplate, encodedModelID)
 
-	headerMutation, bodyMutation = buildRequestMutations(pathSuffix, mutatedBody)
+	// Overwriting path of the Anthropic to Anthropic translator
+	headerMutation.SetHeaders = append(headerMutation.SetHeaders, &corev3.HeaderValueOption{
+		Header: &corev3.HeaderValue{
+			Key:      ":path",
+			RawValue: []byte(pathSuffix),
+		},
+	})
 	return
 }
 
@@ -99,86 +98,8 @@ func (a *anthropicToAWSAnthropicTranslator) ResponseHeaders(_ map[string]string)
 
 // ResponseBody implements [AnthropicMessagesTranslator.ResponseBody] for Anthropic to AWS Bedrock Anthropic.
 // This is essentially a passthrough since AWS Bedrock returns the native Anthropic response format.
-func (a *anthropicToAWSAnthropicTranslator) ResponseBody(_ map[string]string, body io.Reader, endOfStream bool) (
+func (a *anthropicToAWSAnthropicTranslator) ResponseBody(respHeaders map[string]string, body io.Reader, endOfStream bool) (
 	headerMutation *extprocv3.HeaderMutation, bodyMutation *extprocv3.BodyMutation, tokenUsage LLMTokenUsage, responseModel string, err error,
 ) {
-	// Read the response body for both streaming and non-streaming.
-	bodyBytes, err := io.ReadAll(body)
-	if err != nil {
-		return nil, nil, LLMTokenUsage{}, "", fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	// For streaming chunks, parse SSE format to extract token usage.
-	if !endOfStream {
-		// Parse SSE format - split by lines and look for data: lines.
-		for line := range bytes.Lines(bodyBytes) {
-			line = bytes.TrimSpace(line)
-			if bytes.HasPrefix(line, dataPrefix) {
-				jsonData := bytes.TrimPrefix(line, dataPrefix)
-
-				var eventData map[string]any
-				if unmarshalErr := json.Unmarshal(jsonData, &eventData); unmarshalErr != nil {
-					// Skip lines with invalid JSON (like ping events or malformed data).
-					continue
-				}
-				if eventType, ok := eventData["type"].(string); ok {
-					switch eventType {
-					case "message_start":
-						// Extract input tokens from message.usage.
-						if messageData, ok := eventData["message"].(map[string]any); ok {
-							if usageData, ok := messageData["usage"].(map[string]any); ok {
-								if inputTokens, ok := usageData["input_tokens"].(float64); ok {
-									tokenUsage.InputTokens = uint32(inputTokens) //nolint:gosec
-								}
-								// Some message_start events may include initial output tokens.
-								if outputTokens, ok := usageData["output_tokens"].(float64); ok && outputTokens > 0 {
-									tokenUsage.OutputTokens = uint32(outputTokens) //nolint:gosec
-								}
-								tokenUsage.TotalTokens = tokenUsage.InputTokens + tokenUsage.OutputTokens
-							}
-						}
-
-					case "message_delta":
-						if usageData, ok := eventData["usage"].(map[string]any); ok {
-							if outputTokens, ok := usageData["output_tokens"].(float64); ok {
-								// Add to existing output tokens (in case message_start had some initial ones).
-								tokenUsage.OutputTokens += uint32(outputTokens) //nolint:gosec
-								tokenUsage.TotalTokens = tokenUsage.InputTokens + tokenUsage.OutputTokens
-							}
-						}
-					}
-				}
-			}
-		}
-
-		return nil, &extprocv3.BodyMutation{
-			Mutation: &extprocv3.BodyMutation_Body{Body: bodyBytes},
-		}, tokenUsage, a.requestModel, nil
-	}
-
-	// Parse the Anthropic response to extract token usage.
-	var anthropicResp anthropic.Message
-	if err = json.Unmarshal(bodyBytes, &anthropicResp); err != nil {
-		// If we can't parse as Anthropic format, pass through as-is.
-		return nil, &extprocv3.BodyMutation{
-			Mutation: &extprocv3.BodyMutation_Body{Body: bodyBytes},
-		}, LLMTokenUsage{}, a.requestModel, nil
-	}
-
-	// Extract token usage from the response.
-	tokenUsage = LLMTokenUsage{
-		InputTokens:       uint32(anthropicResp.Usage.InputTokens),                                    //nolint:gosec
-		OutputTokens:      uint32(anthropicResp.Usage.OutputTokens),                                   //nolint:gosec
-		TotalTokens:       uint32(anthropicResp.Usage.InputTokens + anthropicResp.Usage.OutputTokens), //nolint:gosec
-		CachedInputTokens: uint32(anthropicResp.Usage.CacheReadInputTokens),                           //nolint:gosec
-	}
-
-	// Pass through the response body unchanged since both input and output are Anthropic format.
-	headerMutation = &extprocv3.HeaderMutation{}
-	setContentLength(headerMutation, bodyBytes)
-	bodyMutation = &extprocv3.BodyMutation{
-		Mutation: &extprocv3.BodyMutation_Body{Body: bodyBytes},
-	}
-
-	return headerMutation, bodyMutation, tokenUsage, a.requestModel, nil
+	return a.anthropicToAnthropicTranslator.ResponseBody(respHeaders, body, endOfStream)
 }
