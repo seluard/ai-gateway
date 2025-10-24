@@ -234,7 +234,8 @@ func TestAnthropicToGCPAnthropicTranslator_BackendVersionHandling(t *testing.T) 
 
 			if tt.shouldError {
 				require.Error(t, err)
-				require.Contains(t, err.Error(), "anthropic_version is required for GCP Vertex AI")
+				require.Contains(t, err.Error(), "anthropic_version is required")
+				require.Contains(t, err.Error(), "GCP Vertex AI")
 				return
 			}
 
