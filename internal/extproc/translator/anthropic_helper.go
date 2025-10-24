@@ -10,17 +10,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
-	anthropicschema "github.com/envoyproxy/ai-gateway/internal/apischema/anthropic"
 	"github.com/envoyproxy/ai-gateway/internal/internalapi"
-)
-
-const (
-	anthropicVersionKey = "anthropic_version"
 )
 
 // anthropicResponseHandler provides shared response handling logic for Anthropic-compatible APIs.
@@ -146,22 +140,4 @@ func applyModelNameOverride(originalModel internalapi.RequestModel, override int
 		return override
 	}
 	return originalModel
-}
-
-// prepareAnthropicRequest prepares the request body for cloud providers (AWS/GCP)
-// The anthropic_version field is required by cloud provider implementations.
-func prepareAnthropicRequest(body *anthropicschema.MessagesRequest, apiVersion string) (map[string]any, error) {
-	anthropicReq := make(map[string]any)
-	maps.Copy(anthropicReq, *body)
-
-	// Remove model field - cloud providers use it in the URL path instead
-	delete(anthropicReq, "model")
-
-	// Add required anthropic_version field
-	if apiVersion == "" {
-		return nil, fmt.Errorf("anthropic_version is required but not provided in backend configuration")
-	}
-	anthropicReq[anthropicVersionKey] = apiVersion
-
-	return anthropicReq, nil
 }

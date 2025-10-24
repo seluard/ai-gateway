@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -43,14 +44,22 @@ func (a *anthropicToAWSAnthropicTranslator) RequestBody(_ []byte, body *anthropi
 	// Extract model name for AWS Bedrock endpoint from the parsed request.
 	modelName := body.GetModel()
 
+	// Work directly with the map since MessagesRequest is already map[string]interface{}.
+	anthropicReq := make(map[string]any)
+	maps.Copy(anthropicReq, *body)
+
 	// Apply model name override if configured.
 	a.requestModel = applyModelNameOverride(modelName, a.modelNameOverride)
 
-	// Prepare the request body (removes model field, adds anthropic_version).
-	anthropicReq, err := prepareAnthropicRequest(body, a.apiVersion)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to prepare request for AWS Bedrock: %w", err)
+	// Remove the model field since AWS Bedrock doesn't want it in the body (it's in the path).
+	delete(anthropicReq, "model")
+
+	// Add AWS-Bedrock-specific anthropic_version field (required by AWS Bedrock).
+	// Uses backend config version (e.g., "bedrock-2023-05-31" for AWS Bedrock).
+	if a.apiVersion == "" {
+		return nil, nil, fmt.Errorf("anthropic_version is required for AWS Bedrock but not provided in backend configuration")
 	}
+	anthropicReq[anthropicVersionKey] = a.apiVersion
 
 	// Marshal the modified request.
 	mutatedBody, err := json.Marshal(anthropicReq)

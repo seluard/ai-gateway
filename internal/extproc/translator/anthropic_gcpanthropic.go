@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 
@@ -41,14 +42,22 @@ func (a *anthropicToGCPAnthropicTranslator) RequestBody(_ []byte, body *anthropi
 	// Extract model name for GCP endpoint from the parsed request.
 	modelName := body.GetModel()
 
+	// Work directly with the map since MessagesRequest is already map[string]interface{}.
+	anthropicReq := make(map[string]any)
+	maps.Copy(anthropicReq, *body)
+
 	// Apply model name override if configured.
 	a.requestModel = applyModelNameOverride(modelName, a.modelNameOverride)
 
-	// Prepare the request body (removes model field, adds anthropic_version).
-	anthropicReq, err := prepareAnthropicRequest(body, a.apiVersion)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to prepare request for GCP Vertex AI: %w", err)
+	// Remove the model field since GCP doesn't want it in the body.
+	delete(anthropicReq, "model")
+
+	// Add GCP-specific anthropic_version field (required by GCP Vertex AI).
+	// Uses backend config version (e.g., "vertex-2023-10-16" for GCP Vertex AI).
+	if a.apiVersion == "" {
+		return nil, nil, fmt.Errorf("anthropic_version is required for GCP Vertex AI but not provided in backend configuration")
 	}
+	anthropicReq[anthropicVersionKey] = a.apiVersion
 
 	// Marshal the modified request.
 	mutatedBody, err := json.Marshal(anthropicReq)
