@@ -61,6 +61,7 @@ func TestWithTestUpstream(t *testing.T) {
 			testUpstreamAzureBackend,
 			testUpstreamGCPVertexAIBackend,
 			testUpstreamGCPAnthropicAIBackend,
+			testUpstreamAWSAnthropicBackend,
 			{
 				Name: "testupstream-openai-5xx", Schema: openAISchema, HeaderMutation: &filterapi.HTTPHeaderMutation{
 					Set: []filterapi.HTTPHeader{{Name: testupstreamlib.ResponseStatusKey, Value: "500"}},
@@ -952,6 +953,100 @@ event: message_stop
 data: {"type":"message_stop"       }
 `,
 			expStatus: http.StatusOK,
+		},
+		{
+			name:            "aws-anthropic - /anthropic/v1/messages",
+			backend:         "aws-anthropic",
+			path:            "/anthropic/v1/messages",
+			method:          http.MethodPost,
+			requestBody:     `{"model":"anthropic.claude-3-sonnet-20240229-v1:0","max_tokens":100,"messages":[{"role":"user","content":[{"type":"text","text":"Hello from AWS!"}]}],"stream":false}`,
+			expRequestBody:  `{"anthropic_version":"bedrock-2023-05-31","max_tokens":100,"messages":[{"content":[{"text":"Hello from AWS!","type":"text"}],"role":"user"}],"stream":false}`,
+			expPath:         "/model/anthropic.claude-3-sonnet-20240229-v1:0/invoke",
+			responseStatus:  strconv.Itoa(http.StatusOK),
+			responseBody:    `{"id":"msg_aws_123","type":"message","role":"assistant","stop_reason": "end_turn", "content":[{"type":"text","text":"Hello from AWS Anthropic!"}],"usage":{"input_tokens":10,"output_tokens":20}}`,
+			expStatus:       http.StatusOK,
+			expResponseBody: `{"id":"msg_aws_123","type":"message","role":"assistant","stop_reason": "end_turn", "content":[{"type":"text","text":"Hello from AWS Anthropic!"}],"usage":{"input_tokens":10,"output_tokens":20}}`,
+		},
+		{
+			name:           "aws-anthropic - /anthropic/v1/messages - streaming",
+			backend:        "aws-anthropic",
+			path:           "/anthropic/v1/messages",
+			method:         http.MethodPost,
+			responseType:   "sse",
+			requestBody:    `{"model":"anthropic.claude-3-haiku-20240307-v1:0","max_tokens":150,"messages":[{"role":"user","content":[{"type":"text","text":"Tell me a joke"}]}],"stream":true}`,
+			expRequestBody: `{"anthropic_version":"bedrock-2023-05-31","max_tokens":150,"messages":[{"content":[{"text":"Tell me a joke","type":"text"}],"role":"user"}],"stream":true}`,
+			expPath:        "/model/anthropic.claude-3-haiku-20240307-v1:0/invoke-stream",
+			responseStatus: strconv.Itoa(http.StatusOK),
+			responseBody: `event: message_start
+data: {"type":"message_start","message":{"id":"msg_aws_456","usage":{"input_tokens":12}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Why did the"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" chicken cross the road?"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":18}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`,
+			expStatus: http.StatusOK,
+			expResponseBody: `event: message_start
+data: {"type":"message_start","message":{"id":"msg_aws_456","usage":{"input_tokens":12}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Why did the"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" chicken cross the road?"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":18}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`,
+		},
+		{
+			name:            "aws-anthropic - /anthropic/v1/messages - ARN model format",
+			backend:         "aws-anthropic",
+			path:            "/anthropic/v1/messages",
+			method:          http.MethodPost,
+			requestBody:     `{"model":"arn:aws:bedrock:eu-central-1:538639307912:application-inference-profile/k375tnm6nr0t","max_tokens":50,"messages":[{"role":"user","content":[{"type":"text","text":"Hi"}]}],"stream":false}`,
+			expRequestBody:  `{"anthropic_version":"bedrock-2023-05-31","max_tokens":50,"messages":[{"content":[{"text":"Hi","type":"text"}],"role":"user"}],"stream":false}`,
+			expPath:         "/model/arn:aws:bedrock:eu-central-1:538639307912:application-inference-profile%2Fk375tnm6nr0t/invoke",
+			responseStatus:  strconv.Itoa(http.StatusOK),
+			responseBody:    `{"id":"msg_arn_789","type":"message","role":"assistant","stop_reason": "end_turn", "content":[{"type":"text","text":"Hi there!"}],"usage":{"input_tokens":5,"output_tokens":8}}`,
+			expStatus:       http.StatusOK,
+			expResponseBody: `{"id":"msg_arn_789","type":"message","role":"assistant","stop_reason": "end_turn", "content":[{"type":"text","text":"Hi there!"}],"usage":{"input_tokens":5,"output_tokens":8}}`,
+		},
+		{
+			name:            "aws-anthropic - /anthropic/v1/messages - error response",
+			backend:         "aws-anthropic",
+			path:            "/anthropic/v1/messages",
+			method:          http.MethodPost,
+			requestBody:     `{"model":"anthropic.claude-3-sonnet-20240229-v1:0","max_tokens":100,"messages":[{"role":"user","content":[{"type":"text","text":"Test error"}]}]}`,
+			expPath:         "/model/anthropic.claude-3-sonnet-20240229-v1:0/invoke",
+			responseStatus:  strconv.Itoa(http.StatusBadRequest),
+			responseBody:    `{"type":"error","error":{"type":"validation_error","message":"Invalid request format"}}`,
+			expStatus:       http.StatusBadRequest,
+			expResponseBody: `{"type":"error","error":{"type":"validation_error","message":"Invalid request format"}}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -36,7 +36,7 @@ const (
 var (
 	openAISchema         = filterapi.VersionedAPISchema{Name: filterapi.APISchemaOpenAI, Version: "v1"}
 	awsBedrockSchema     = filterapi.VersionedAPISchema{Name: filterapi.APISchemaAWSBedrock}
-	awsAnthropicSchema   = filterapi.VersionedAPISchema{Name: filterapi.APISchemaAWSAnthropic}
+	awsAnthropicSchema   = filterapi.VersionedAPISchema{Name: filterapi.APISchemaAWSAnthropic, Version: "bedrock-2023-05-31"}
 	azureOpenAISchema    = filterapi.VersionedAPISchema{Name: filterapi.APISchemaAzureOpenAI, Version: "2025-01-01-preview"}
 	gcpVertexAISchema    = filterapi.VersionedAPISchema{Name: filterapi.APISchemaGCPVertexAI}
 	gcpAnthropicAISchema = filterapi.VersionedAPISchema{Name: filterapi.APISchemaGCPAnthropic, Version: "vertex-2023-10-16"}
@@ -59,6 +59,9 @@ var (
 		AccessToken: fakeGCPAuthToken,
 		Region:      "gcp-region",
 		ProjectName: "gcp-project-name",
+	}}}
+	testUpstreamAWSAnthropicBackend = filterapi.Backend{Name: "testupstream-aws-anthropic", Schema: awsAnthropicSchema, Auth: &filterapi.BackendAuth{AWSAuth: &filterapi.AWSAuth{
+		Region: "us-east-1",
 	}}}
 	alwaysFailingBackend = filterapi.Backend{Name: "always-failing-backend", Schema: openAISchema}
 

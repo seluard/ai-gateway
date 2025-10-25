@@ -50,10 +50,6 @@ func TestWithRealProviders(t *testing.T) {
 				CredentialFileLiteral: cc.AWSFileLiteral,
 				Region:                "us-east-1",
 			}}},
-			{Name: "aws-bedrock-anthropic", Schema: awsAnthropicSchema, Auth: &filterapi.BackendAuth{AWSAuth: &filterapi.AWSAuth{
-				CredentialFileLiteral: cc.AWSFileLiteral,
-				Region:                "us-east-1",
-			}}},
 			{Name: "azure-openai", Schema: azureOpenAISchema, Auth: &filterapi.BackendAuth{
 				AzureAuth: &filterapi.AzureAuth{AccessToken: cc.AzureAccessToken},
 			}},
