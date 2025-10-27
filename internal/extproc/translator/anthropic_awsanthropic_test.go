@@ -638,14 +638,12 @@ data: {"type":"message_start","message":{"id":"msg_123","type":"message","role":
 
 `
 					bodyReader := bytes.NewReader([]byte(messageStartChunk))
-					headerMutation, bodyMutation, tokenUsage, responseModel, err := translator.ResponseBody(respHeaders, bodyReader, false)
+					headerMutation, bodyMutation, _, responseModel, err := translator.ResponseBody(respHeaders, bodyReader, false)
 					require.NoError(t, err)
 					assert.Nil(t, headerMutation, "streaming chunks should not modify headers")
 					assert.Nil(t, bodyMutation, "streaming chunks should pass through")
 					// Token usage extraction from streaming chunks depends on buffering implementation
-					// Just verify the extraction works and returns valid data
-					assert.GreaterOrEqual(t, tokenUsage.InputTokens, uint32(0), "input tokens should be non-negative")
-					assert.GreaterOrEqual(t, tokenUsage.TotalTokens, uint32(0), "total tokens should be non-negative")
+					// message_start events don't contain usage info, only message_delta events do
 					// Response model can be either the full request model or the model from the response
 					assert.NotEmpty(t, responseModel, "response model should be set")
 
@@ -655,7 +653,8 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 
 `
 					bodyReader = bytes.NewReader([]byte(contentDeltaChunk))
-					headerMutation, bodyMutation, tokenUsage, responseModel, err = translator.ResponseBody(respHeaders, bodyReader, false)
+					var tokenUsage LLMTokenUsage
+					headerMutation, bodyMutation, tokenUsage, _, err = translator.ResponseBody(respHeaders, bodyReader, false)
 					require.NoError(t, err)
 					assert.Nil(t, headerMutation, "streaming chunks should not modify headers")
 					assert.Nil(t, bodyMutation, "streaming chunks should pass through")
@@ -673,8 +672,8 @@ data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":
 					assert.Nil(t, headerMutation, "streaming chunks should not modify headers")
 					assert.Nil(t, bodyMutation, "streaming chunks should pass through")
 					// Token usage is buffered and extracted across chunks
-					assert.GreaterOrEqual(t, tokenUsage.OutputTokens, uint32(0), "output tokens should be non-negative")
-					assert.GreaterOrEqual(t, tokenUsage.TotalTokens, uint32(0), "total tokens should be non-negative")
+					assert.Positive(t, tokenUsage.OutputTokens, "output tokens should be positive")
+					assert.Positive(t, tokenUsage.TotalTokens, "total tokens should be positive")
 					assert.NotEmpty(t, responseModel, "response model should be set")
 
 					// Message stop chunk
@@ -683,7 +682,7 @@ data: {"type":"message_stop"}
 
 `
 					bodyReader = bytes.NewReader([]byte(messageStopChunk))
-					headerMutation, bodyMutation, tokenUsage, responseModel, err = translator.ResponseBody(respHeaders, bodyReader, false)
+					headerMutation, bodyMutation, tokenUsage, _, err = translator.ResponseBody(respHeaders, bodyReader, false)
 					require.NoError(t, err)
 					assert.Nil(t, headerMutation, "streaming chunks should not modify headers")
 					assert.Nil(t, bodyMutation, "streaming chunks should pass through")

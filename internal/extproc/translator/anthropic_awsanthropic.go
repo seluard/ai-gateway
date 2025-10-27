@@ -61,9 +61,6 @@ func (a *anthropicToAWSAnthropicTranslator) RequestBody(rawBody []byte, body *an
 		Mutation: &extprocv3.BodyMutation_Body{Body: preparedBody},
 	}
 
-	// update content length after changing the body
-	setContentLength(headerMutation, preparedBody)
-
 	// Determine the AWS Bedrock path based on whether streaming is requested.
 	var pathTemplate string
 	if body.GetStream() {
@@ -78,13 +75,21 @@ func (a *anthropicToAWSAnthropicTranslator) RequestBody(rawBody []byte, body *an
 	encodedModelID := url.PathEscape(a.requestModel)
 	pathSuffix := fmt.Sprintf(pathTemplate, encodedModelID)
 
-	// Overwriting path of the Anthropic to Anthropic translator
-	headerMutation.SetHeaders = append(headerMutation.SetHeaders, &corev3.HeaderValueOption{
-		Header: &corev3.HeaderValue{
-			Key:      ":path",
-			RawValue: []byte(pathSuffix),
+	// Update headers: replace path and content-length
+	headerMutation.SetHeaders = []*corev3.HeaderValueOption{
+		{
+			Header: &corev3.HeaderValue{
+				Key:      "content-length",
+				RawValue: []byte(fmt.Sprintf("%d", len(preparedBody))),
+			},
 		},
-	})
+		{
+			Header: &corev3.HeaderValue{
+				Key:      ":path",
+				RawValue: []byte(pathSuffix),
+			},
+		},
+	}
 	return
 }
 
